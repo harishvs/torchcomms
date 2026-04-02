@@ -36,7 +36,8 @@ std::vector<CtranMapperBackend> getToEnableBackends(
           {NCCL_CTRAN_BACKENDS::ib, CtranMapperBackend::IB},
           {NCCL_CTRAN_BACKENDS::nvl, CtranMapperBackend::NVL},
           {NCCL_CTRAN_BACKENDS::socket, CtranMapperBackend::SOCKET},
-          {NCCL_CTRAN_BACKENDS::tcpdm, CtranMapperBackend::TCPDM}};
+          {NCCL_CTRAN_BACKENDS::tcpdm, CtranMapperBackend::TCPDM},
+          {NCCL_CTRAN_BACKENDS::efa, CtranMapperBackend::EFA}};
 
   std::vector<CtranMapperBackend> enableBackends;
 
@@ -139,8 +140,27 @@ CtranMapper::CtranMapper(CtranComm* comm) {
       CLOGF(WARN, "CTRAN-MAPPER: IB backend not enabled");
     }
   }
-  if (enableBackends_[CtranMapperBackend::SOCKET]) {
+  if (enableBackends_[CtranMapperBackend::EFA]) {
     if (!this->ctranIb) {
+      try {
+        this->ctranEfa =
+            std::make_unique<class CtranEfa>(comm, this->ctrlMgr.get());
+        this->ctranEfa->regCtrlCb(this->ctrlMgr);
+      } catch ([[maybe_unused]] const std::bad_alloc& e) {
+        ctranEfa = nullptr;
+        enableBackends_[CtranMapperBackend::EFA] = false;
+        CLOGF(WARN, "CTRAN-MAPPER: EFA backend not enabled");
+      }
+    } else {
+      enableBackends_[CtranMapperBackend::EFA] = false;
+      CLOGF_SUBSYS(
+          INFO,
+          INIT,
+          "CTRAN-MAPPER: EFA backend not enabled, since IB backend is enabled");
+    }
+  }
+  if (enableBackends_[CtranMapperBackend::SOCKET]) {
+    if (!this->ctranIb && !this->ctranEfa) {
       this->ctranSock =
           std::make_unique<class CtranSocket>(comm, this->ctrlMgr.get());
     } else {
@@ -158,8 +178,8 @@ CtranMapper::CtranMapper(CtranComm* comm) {
   }
 
   if (enableBackends_[CtranMapperBackend::NVL]) {
-    // NVL backend depends on IB backend for control msg exchange
-    if (this->ctranIb || this->ctranSock || this->ctranTcpDm) {
+    // NVL backend depends on IB/EFA backend for control msg exchange
+    if (this->ctranIb || this->ctranEfa || this->ctranSock || this->ctranTcpDm) {
       try {
         this->ctranNvl = std::make_unique<class CtranNvl>(comm);
       } catch ([[maybe_unused]] const std::bad_alloc& e) {
@@ -843,6 +863,8 @@ commResult_t CtranMapper::icopy(
 commResult_t CtranMapper::preConnect(const std::unordered_set<int>& peerRanks) {
   if (this->ctranIb != nullptr) {
     FB_COMMCHECK(this->ctranIb->preConnect(peerRanks));
+  } else if (this->ctranEfa != nullptr) {
+    FB_COMMCHECK(this->ctranEfa->preConnect(peerRanks));
   } else if (ctranSock != nullptr) {
     FB_COMMCHECK(this->ctranSock->preConnect(peerRanks));
   } else if (this->ctranTcpDm != nullptr) {
@@ -856,6 +878,8 @@ CtranMapperBackend CtranMapper::getBackend(int rank) {
     return CtranMapperBackend::NVL;
   } else if (this->ctranIb) {
     return CtranMapperBackend::IB;
+  } else if (this->ctranEfa) {
+    return CtranMapperBackend::EFA;
   } else if (this->ctranSock) {
     return CtranMapperBackend::SOCKET;
   } else if (this->ctranTcpDm) {
@@ -869,6 +893,8 @@ bool CtranMapper::hasBackend(int rank, CtranMapperBackend specified) {
     return this->ctranNvl && this->ctranNvl->isSupported(rank);
   } else if (specified == CtranMapperBackend::IB) {
     return this->ctranIb != nullptr;
+  } else if (specified == CtranMapperBackend::EFA) {
+    return this->ctranEfa != nullptr;
   } else if (specified == CtranMapperBackend::TCPDM) {
     return this->ctranTcpDm != nullptr;
   } else if (specified == CtranMapperBackend::SOCKET) {
@@ -1051,6 +1077,9 @@ std::string CtranMapperRemoteAccessKey::toString() const {
       break;
     case CtranMapperBackend::IB:
       ss << ", ibKey=" << "[" << ibKey.toString() << "]";
+      break;
+    case CtranMapperBackend::EFA:
+      ss << ", efaKey=" << "[" << efaKey.toString() << "]";
       break;
     default:
       break;

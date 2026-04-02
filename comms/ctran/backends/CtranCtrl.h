@@ -37,6 +37,7 @@ enum ControlMsgType {
   NVL_RELEASE_MEM = 2,
   IB_EXPORT_MEM = 3,
   SYNC = 4,
+  EFA_EXPORT_MEM = 5,
   UNSPECIFIED /* for receiving any type */
 };
 
@@ -48,6 +49,8 @@ constexpr const char* ControlMsgTypeToString(ControlMsgType type) {
       return "NVL_RELEASE_MEM";
     case IB_EXPORT_MEM:
       return "IB_EXPORT_MEM";
+    case EFA_EXPORT_MEM:
+      return "EFA_EXPORT_MEM";
     case SYNC:
       return "SYNC";
     case UNSPECIFIED:
@@ -83,6 +86,7 @@ struct ControlMsg {
     struct ctran::regcache::IpcDesc ipcDesc;
     struct ctran::regcache::IpcRelease ipcRls;
     struct ctran::regcache::IBDesc ibDesc;
+    struct ctran::regcache::EfaDesc efaDesc;
   };
 
   AuxData_t<DefaultAuxType> aux; // Used to store the remote aux data
@@ -106,6 +110,9 @@ struct ControlMsg {
       case ControlMsgType::IB_EXPORT_MEM:
         ibDesc = ctran::regcache::IBDesc{};
         break;
+      case ControlMsgType::EFA_EXPORT_MEM:
+        efaDesc = ctran::regcache::EfaDesc{};
+        break;
       default:
         break;
     }
@@ -122,6 +129,9 @@ struct ControlMsg {
         break;
       case ControlMsgType::IB_EXPORT_MEM:
         ss << ibDesc.toString();
+        break;
+      case ControlMsgType::EFA_EXPORT_MEM:
+        ss << efaDesc.toString();
         break;
       case ControlMsgType::SYNC:
         ss << "SYNC";

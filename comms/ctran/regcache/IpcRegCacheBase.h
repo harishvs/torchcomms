@@ -14,6 +14,9 @@
 // depend on CtranCtrl and CtranCtrl is removed
 constexpr int CTRAN_MAX_IB_DEVICES_PER_RANK{2};
 
+// Maximum number of EFA rails (NICs) per rank for remote key exchange.
+constexpr int CTRAN_MAX_EFA_RAILS{4};
+
 namespace ctran {
 namespace regcache {
 
@@ -25,6 +28,21 @@ struct IBDesc {
   std::string toString() const {
     std::string s =
         fmt::format("[IB_EXPORT_MEM] remoteAddr: 0x{:x}", remoteAddr);
+    for (int i = 0; i < nKeys; i++) {
+      s += fmt::format(", rkeys[{}]: {}", i, rkeys[i]);
+    }
+    return s;
+  }
+};
+
+struct EfaDesc {
+  uint64_t remoteAddr{0};
+  std::array<uint64_t, CTRAN_MAX_EFA_RAILS> rkeys{};
+  int nKeys{0};
+
+  std::string toString() const {
+    std::string s =
+        fmt::format("[EFA_EXPORT_MEM] remoteAddr: 0x{:x}", remoteAddr);
     for (int i = 0; i < nKeys; i++) {
       s += fmt::format(", rkeys[{}]: {}", i, rkeys[i]);
     }

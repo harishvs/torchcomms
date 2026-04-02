@@ -13,6 +13,10 @@ if (NOT DEFINED ENABLE_TCPDM OR NOT ENABLE_TCPDM)
     add_compile_definitions(CTRAN_DISABLE_TCPDM)
     list(FILTER CTRAN_SOURCES EXCLUDE REGEX ".*/ctran/backends/tcpdevmem/.*")
 endif()
+if (NOT DEFINED ENABLE_EFA OR NOT ENABLE_EFA)
+    add_compile_definitions(CTRAN_DISABLE_EFA)
+    list(FILTER CTRAN_SOURCES EXCLUDE REGEX ".*/ctran/backends/efa/.*")
+endif()
 
 list(FILTER CMAKE_CUDA_FLAGS EXCLUDE REGEX ".*arch=compute_50,code=sm_50")
 list(FILTER CMAKE_CUDA_FLAGS EXCLUDE REGEX ".*arch=compute_60,code=sm_60")
@@ -45,8 +49,12 @@ target_compile_options(ctran PRIVATE
 )
 if (NOT DEFINED ENABLE_TCPDM OR NOT ENABLE_TCPDM)
     target_compile_options(ctran PRIVATE
-        # copied from nccl
         $<$<COMPILE_LANGUAGE:CUDA>:--compiler-options "-DCTRAN_DISABLE_TCPDM">
+    )
+endif()
+if (NOT DEFINED ENABLE_EFA OR NOT ENABLE_EFA)
+    target_compile_options(ctran PRIVATE
+        $<$<COMPILE_LANGUAGE:CUDA>:--compiler-options "-DCTRAN_DISABLE_EFA">
     )
 endif()
 

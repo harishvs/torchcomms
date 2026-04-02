@@ -19,6 +19,12 @@
 #include "comms/ctran/backends/tcpdevmem/CtranTcpDmBase.h"
 #endif
 
+#ifdef CTRAN_DISABLE_EFA
+#include "comms/ctran/backends/mock/CtranEfaBaseMock.h"
+#else
+#include "comms/ctran/backends/efa/CtranEfaBase.h"
+#endif
+
 using CtranMapperBackend = meta::comms::CommBackend;
 
 constexpr const char* CtranMapperBackendToString(CtranMapperBackend backend) {
@@ -33,6 +39,8 @@ constexpr const char* CtranMapperBackendToString(CtranMapperBackend backend) {
       return "SOCKET";
     case CtranMapperBackend::TCPDM:
       return "TCPDM";
+    case CtranMapperBackend::EFA:
+      return "EFA";
     case CtranMapperBackend::NUM_BACKENDS:
       return "NUM_BACKENDS";
     default:
@@ -52,6 +60,7 @@ struct CtranMapperRemoteAccessKey {
   CtranMapperBackend backend{CtranMapperBackend::UNSET};
   struct CtranIbRemoteAccessKey ibKey;
   struct ctran::regcache::IpcRemHandle nvlKey;
+  struct CtranEfaRemoteAccessKey efaKey;
 
   std::string toString() const;
 };
@@ -108,6 +117,8 @@ class CtranMapperRequest {
     IB_GET,
     NVL_PUT,
     TCPDM_PUT,
+    EFA_PUT,
+    EFA_GET,
     COPY,
     ATOMIC_SET
   };
@@ -129,6 +140,7 @@ class CtranMapperRequest {
     ibReq = other.ibReq;
     sockReq = other.sockReq;
     tcpDmReq = other.tcpDmReq;
+    efaReq = other.efaReq;
     state_ = other.state_;
     setCtrlMsg(other);
     setConfig(other.getConfig());
@@ -143,6 +155,7 @@ class CtranMapperRequest {
       ibReq = other.ibReq;
       sockReq = other.sockReq;
       tcpDmReq = other.tcpDmReq;
+      efaReq = other.efaReq;
       state_ = other.state_;
       setCtrlMsg(other);
       setConfig(other.getConfig());
@@ -186,6 +199,7 @@ class CtranMapperRequest {
   CtranIbRequest ibReq;
   CtranSocketRequest sockReq;
   ctran::CtranTcpDmRequest tcpDmReq;
+  CtranEfaRequest efaReq;
   int peer{-1};
   CtranMapperBackend backend{CtranMapperBackend::IB};
   AuxData_t<DefaultAuxType> aux{0};

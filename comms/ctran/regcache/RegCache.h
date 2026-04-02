@@ -104,6 +104,7 @@ struct RegElem {
   void* ibRegElem{nullptr};
   void* ipcRegElem{nullptr};
   void* tcpRegElem{nullptr};
+  void* efaRegElem{nullptr};
 
   // The state of the segment to ensure thread-safe access.
   // Concurrent writes:
@@ -193,7 +194,7 @@ struct RegElem {
        << ", isDynamic: " << isDynamic_ << ", lookupHit: " << lookupHit_;
     if (state == RegElemState::REGISTERED) {
       ss << ", ibRegElem: " << ibRegElem << ", ipcRegElem: " << ipcRegElem
-         << ", tcpRegElem: " << tcpRegElem;
+         << ", tcpRegElem: " << tcpRegElem << ", efaRegElem: " << efaRegElem;
     }
     if (segments_.size()) {
       ss << ", segments: [";

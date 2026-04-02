@@ -11,6 +11,11 @@
 #else
 #include "comms/ctran/backends/tcpdevmem/CtranTcpDm.h"
 #endif
+#ifdef CTRAN_DISABLE_EFA
+#include "comms/ctran/backends/mock/CtranEfaMock.h"
+#else
+#include "comms/ctran/backends/efa/CtranEfa.h"
+#endif
 #include "comms/ctran/mapper/CtranMapperTypes.h"
 #include "comms/ctran/utils/Checks.h"
 #include "comms/ctran/utils/Debug.h"
@@ -1493,6 +1498,11 @@ commResult_t ctran::regcache::RegElem::doRegister(
         ctran::CtranTcpDm::regMem((void*)buf, len, cudaDev_, &tcpRegElem));
   }
 
+  // Register with EFA backend.
+  if (backends[CommBackend::EFA]) {
+    FB_COMMCHECK(CtranEfa::regMem(buf, len, cudaDev_, &efaRegElem));
+  }
+
   stat->state = ctran::regcache::RegElemState::REGISTERED;
   CLOGF_SUBSYS(
       INFO,
@@ -1526,6 +1536,10 @@ commResult_t ctran::regcache::RegElem::doDeregister() {
   if (tcpRegElem) {
     FB_COMMCHECK(ctran::CtranTcpDm::deregMem(tcpRegElem));
     tcpRegElem = nullptr;
+  }
+  if (efaRegElem) {
+    FB_COMMCHECK(CtranEfa::deregMem(efaRegElem));
+    efaRegElem = nullptr;
   }
 
   stat->state = ctran::regcache::RegElemState::DEREGISTERED;

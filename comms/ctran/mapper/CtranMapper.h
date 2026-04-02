@@ -32,6 +32,12 @@
 #include "comms/ctran/backends/tcpdevmem/CtranTcpDm.h"
 #endif
 
+#ifdef CTRAN_DISABLE_EFA
+#include "comms/ctran/backends/mock/CtranEfaMock.h"
+#else
+#include "comms/ctran/backends/efa/CtranEfa.h"
+#endif
+
 // Forward declaration for MapperTrace due to NVCC's lack of concepts support
 namespace ncclx::colltrace {
 class MapperTrace;
@@ -884,6 +890,8 @@ class CtranMapper : public ctran::regcache::IpcExportClient {
         return "SOCKET";
       case CtranMapperBackend::TCPDM:
         return "TCPDM";
+      case CtranMapperBackend::EFA:
+        return "EFA";
       default:
         return "UNKNOWN";
     }
@@ -898,6 +906,8 @@ class CtranMapper : public ctran::regcache::IpcExportClient {
   inline commResult_t progress() {
     if (this->ctranIb != nullptr) {
       FB_COMMCHECK(this->ctranIb->progress<PerfConfig>());
+    } else if (this->ctranEfa != nullptr) {
+      FB_COMMCHECK(this->ctranEfa->progress<PerfConfig>());
     } else if (this->ctranSock != nullptr) {
       FB_COMMCHECK(this->ctranSock->progress());
     } else if (this->ctranTcpDm != nullptr) {
@@ -933,12 +943,16 @@ class CtranMapper : public ctran::regcache::IpcExportClient {
       case CtranMapperRequest::ReqType::IB_GET:
       case CtranMapperRequest::ReqType::ATOMIC_SET:
       case CtranMapperRequest::ReqType::TCPDM_PUT:
+      case CtranMapperRequest::ReqType::EFA_PUT:
+      case CtranMapperRequest::ReqType::EFA_GET:
       case CtranMapperRequest::ReqType::SEND_SYNC_CTRL:
       case CtranMapperRequest::ReqType::RECV_SYNC_CTRL:
       case CtranMapperRequest::ReqType::SEND_CTRL_MSG:
       case CtranMapperRequest::ReqType::RECV_CTRL_MSG:
         if (req->backend == CtranMapperBackend::IB) {
           *isComplete = req->ibReq.isComplete();
+        } else if (req->backend == CtranMapperBackend::EFA) {
+          *isComplete = req->efaReq.isComplete();
         } else if (req->backend == CtranMapperBackend::SOCKET) {
           *isComplete = req->sockReq.isComplete();
         } else {
@@ -948,6 +962,8 @@ class CtranMapper : public ctran::regcache::IpcExportClient {
       case CtranMapperRequest::ReqType::RECV_CTRL:
         if (req->backend == CtranMapperBackend::IB) {
           *isComplete = req->ibReq.isComplete();
+        } else if (req->backend == CtranMapperBackend::EFA) {
+          *isComplete = req->efaReq.isComplete();
         } else if (req->backend == CtranMapperBackend::SOCKET) {
           *isComplete = req->sockReq.isComplete();
         } else {
@@ -1008,6 +1024,9 @@ class CtranMapper : public ctran::regcache::IpcExportClient {
       }
     } else if (notify->backend == CtranMapperBackend::IB) {
       FB_COMMCHECK(this->ctranIb->waitNotify<PerfConfig>(
+          notify->peer, notify->notifyCnt));
+    } else if (notify->backend == CtranMapperBackend::EFA) {
+      FB_COMMCHECK(this->ctranEfa->waitNotify<PerfConfig>(
           notify->peer, notify->notifyCnt));
     } else if (notify->backend == CtranMapperBackend::TCPDM) {
       // TODO(T239012482): enable and test TCPDM FT
@@ -1109,6 +1128,8 @@ class CtranMapper : public ctran::regcache::IpcExportClient {
 
     } else if (backend == CtranMapperBackend::IB) {
       FB_COMMCHECK(CtranIb::exportMem(buf, regElem->ibRegElem, msg));
+    } else if (backend == CtranMapperBackend::EFA) {
+      FB_COMMCHECK(CtranEfa::exportMem(buf, regElem->efaRegElem, msg));
     } else if (backend == CtranMapperBackend::TCPDM) {
       // No need to export the buffers, TCP device memory is steered by
       // the receiver.
@@ -1140,6 +1161,17 @@ class CtranMapper : public ctran::regcache::IpcExportClient {
         }
         remKey->backend = CtranMapperBackend::IB;
         FB_COMMCHECK(CtranIb::importMem(buf, &(remKey->ibKey), msg));
+        break;
+      case ControlMsgType::EFA_EXPORT_MEM:
+        if (!this->ctranEfa) {
+          CLOGF(
+              ERR,
+              "CTRAN-MAPPER: EFA backend is disabled but received unexpected internal control msg ({})",
+              msg.toString());
+          return commInternalError;
+        }
+        remKey->backend = CtranMapperBackend::EFA;
+        FB_COMMCHECK(CtranEfa::importMem(buf, &(remKey->efaKey), msg));
         break;
       case ControlMsgType::NVL_EXPORT_MEM: {
         if (!this->ctranNvl) {
@@ -1179,6 +1211,8 @@ class CtranMapper : public ctran::regcache::IpcExportClient {
       return CtranMapperBackend::NVL;
     } else if (this->ctranIb && regElem->ibRegElem) {
       return CtranMapperBackend::IB;
+    } else if (this->ctranEfa && regElem->efaRegElem) {
+      return CtranMapperBackend::EFA;
     } else if (this->ctranTcpDm && regElem->tcpRegElem) {
       return CtranMapperBackend::TCPDM;
     }
@@ -1193,6 +1227,8 @@ class CtranMapper : public ctran::regcache::IpcExportClient {
 
     if (this->ctranIb) {
       return CtranMapperBackend::IB;
+    } else if (this->ctranEfa) {
+      return CtranMapperBackend::EFA;
     } else if (this->ctranSock) {
       return CtranMapperBackend::SOCKET;
     } else if (this->ctranTcpDm) {
@@ -1237,6 +1273,9 @@ class CtranMapper : public ctran::regcache::IpcExportClient {
     if (ctranIb) {
       return ctranIb->isendCtrlMsg<PerfConfig>(
           msg.type, &msg, sizeof(ControlMsg), peerRank, req->ibReq);
+    } else if (ctranEfa) {
+      return ctranEfa->isendCtrlMsg<PerfConfig>(
+          msg.type, &msg, sizeof(ControlMsg), peerRank, req->efaReq);
     } else if (ctranSock) {
       return ctranSock->isendCtrlMsg(msg, peerRank, req->sockReq);
     } else {
@@ -1277,6 +1316,9 @@ class CtranMapper : public ctran::regcache::IpcExportClient {
     if (ctranIb) {
       return ctranIb->irecvCtrlMsg<PerfConfig>(
           &msg, sizeof(msg), peerRank, req->ibReq);
+    } else if (ctranEfa) {
+      return ctranEfa->irecvCtrlMsg<PerfConfig>(
+          &msg, sizeof(msg), peerRank, req->efaReq);
     } else if (ctranSock) {
       return ctranSock->irecvCtrlMsg(msg, peerRank, req->sockReq);
     } else {
@@ -1541,7 +1583,31 @@ class CtranMapper : public ctran::regcache::IpcExportClient {
     const auto& remoteAccessKey = config.remoteAccessKey_;
     const auto& notify = config.notify_;
     const auto& ibConfig = config.ibConfig_;
-    if (remoteAccessKey.backend == CtranMapperBackend::IB ||
+    if (remoteAccessKey.backend == CtranMapperBackend::EFA) {
+      if (req != nullptr) {
+        req->type = CtranMapperRequest::ReqType::EFA_PUT;
+        req->peer = peerRank;
+        req->backend = CtranMapperBackend::EFA;
+        req->setConfig(config);
+      }
+
+      struct ctran::regcache::RegElem* regElem =
+          reinterpret_cast<struct ctran::regcache::RegElem*>(shdl);
+      auto regLk = regElem->stateMnger.rlock();
+
+      CtranEfaRequest* efaReqPtr = (req == nullptr ? nullptr : &(req->efaReq));
+      iPutCount[CtranMapperBackend::EFA]++;
+      FB_COMMCHECK(this->ctranEfa->iput<PerfConfig>(
+          sbuf,
+          dbuf,
+          len,
+          peerRank,
+          regElem->efaRegElem,
+          remoteAccessKey.efaKey,
+          notify,
+          nullptr,
+          efaReqPtr));
+    } else if (remoteAccessKey.backend == CtranMapperBackend::IB ||
         // If kernElem is not provided, falls back to IB
         // NOTE: it requires a match with the receiver side waitNotify, where it
         // should also be initialized with a nullptr kernElem to fallback to IB
@@ -1672,7 +1738,37 @@ class CtranMapper : public ctran::regcache::IpcExportClient {
     const auto shdl = config.memHdl_;
     const auto& remoteAccessKey = config.remoteAccessKey_;
     const auto& ibConfig = config.ibConfig_;
-    if (remoteAccessKey.backend == CtranMapperBackend::IB) {
+    if (remoteAccessKey.backend == CtranMapperBackend::EFA) {
+      if (req != nullptr) {
+        if (this->ctranEfa != nullptr) {
+          req->type = CtranMapperRequest::ReqType::EFA_GET;
+          req->peer = peerRank;
+          req->backend = CtranMapperBackend::EFA;
+          req->setConfig(config);
+        } else {
+          CLOGF(
+              ERR,
+              "CTRAN-MAPPER: Unsupported backend iget without EFA backend");
+          return commInternalError;
+        }
+      }
+
+      struct ctran::regcache::RegElem* regElem =
+          reinterpret_cast<struct ctran::regcache::RegElem*>(shdl);
+      auto regLk = regElem->stateMnger.rlock();
+
+      CtranEfaRequest* efaReqPtr = (req == nullptr ? nullptr : &(req->efaReq));
+      iGetCount[CtranMapperBackend::EFA]++;
+      FB_COMMCHECK(this->ctranEfa->iget<PerfConfig>(
+          sbuf,
+          dbuf,
+          len,
+          peerRank,
+          regElem->efaRegElem,
+          remoteAccessKey.efaKey,
+          nullptr,
+          efaReqPtr));
+    } else if (remoteAccessKey.backend == CtranMapperBackend::IB) {
       if (req != nullptr) {
         if (this->ctranIb != nullptr) {
           req->type = CtranMapperRequest::ReqType::IB_GET;
@@ -1784,6 +1880,10 @@ class CtranMapper : public ctran::regcache::IpcExportClient {
       // Revoke elem if switched to use IB for a NVL peer
       kernElem->revoke();
       kernElem = nullptr;
+    } else if (backend == CtranMapperBackend::EFA && kernElem) {
+      // Revoke elem if switched to use EFA for a NVL peer
+      kernElem->revoke();
+      kernElem = nullptr;
     } else if (backend == CtranMapperBackend::TCPDM) {
       // We are mapping two-sided communications (i.e., send/receive) to
       // one-sided communications (i.e., iPUT/waitNotify). Due to this, we
@@ -1837,6 +1937,8 @@ class CtranMapper : public ctran::regcache::IpcExportClient {
       *done = notify->kernElem->isComplete();
     } else if (notify->backend == CtranMapperBackend::IB) {
       FB_COMMCHECK(this->ctranIb->checkNotify<PerfConfig>(notify->peer, done));
+    } else if (notify->backend == CtranMapperBackend::EFA) {
+      FB_COMMCHECK(this->ctranEfa->checkNotify<PerfConfig>(notify->peer, done));
     } else if (notify->backend == CtranMapperBackend::TCPDM) {
       *done = notify->tcpDmReq.isComplete();
     } else {
@@ -1948,6 +2050,7 @@ class CtranMapper : public ctran::regcache::IpcExportClient {
   std::unique_ptr<class CtranNvl> ctranNvl{nullptr};
   std::unique_ptr<class CtranSocket> ctranSock{nullptr};
   std::unique_ptr<class ctran::CtranTcpDm> ctranTcpDm{nullptr};
+  std::unique_ptr<class CtranEfa> ctranEfa{nullptr};
   std::unique_ptr<class CtranCtrlManager> ctrlMgr{nullptr};
 
   // holds enabled backends when the mapper is created.

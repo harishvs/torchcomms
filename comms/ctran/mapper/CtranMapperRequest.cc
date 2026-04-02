@@ -10,7 +10,9 @@ static std::unordered_map<CtranMapperRequest::ReqType, std::string> reqTypeStr =
      {CtranMapperRequest::ReqType::SEND_SYNC_CTRL, "SEND_SYNC_CTRL"},
      {CtranMapperRequest::ReqType::RECV_SYNC_CTRL, "RECV_SYNC_CTRL"},
      {CtranMapperRequest::ReqType::IB_PUT, "IB_PUT"},
-     {CtranMapperRequest::ReqType::NVL_PUT, "NVL_PUT"}};
+     {CtranMapperRequest::ReqType::NVL_PUT, "NVL_PUT"},
+     {CtranMapperRequest::ReqType::EFA_PUT, "EFA_PUT"},
+     {CtranMapperRequest::ReqType::EFA_GET, "EFA_GET"}};
 
 const std::string getReqTypeStr(CtranMapperRequest::ReqType type) {
   return reqTypeStr[type];
@@ -28,6 +30,7 @@ CtranMapperRequest::CtranMapperRequest(
     this->config_.kernElem_ = nullptr;
   }
   if (backend != CtranMapperBackend::IB &&
+      backend != CtranMapperBackend::EFA &&
       backend != CtranMapperBackend::SOCKET) {
     CLOGF(
         ERR,
